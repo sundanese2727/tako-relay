@@ -55,7 +55,7 @@ let totalReceived = 0;
 //    Diset di https://tako.id/me/api-keys sebagai "Callback URL"
 //    Contoh: https://nama-app-lu.up.railway.app/webhook/tako
 // --------------------------------------------------------------
-app.post("/webhook/tako", (req, res) => {
+app.post("/webhook/tako", async (req, res) => {
   const signatureHeader = req.header("X-Tako-Signature");
 
   // Kalau Callback Secret diisi di dashboard Tako, kita WAJIB
