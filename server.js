@@ -31,6 +31,10 @@ app.use(
 
 const TAKO_CALLBACK_SECRET = process.env.TAKO_CALLBACK_SECRET || "";
 const ROBLOX_SHARED_SECRET = process.env.ROBLOX_SHARED_SECRET || "";
+// API key yang sama kayak yang lu pakai buat Callback URL di dashboard Tako.
+// Dipakai buat ambil nama/pesan donatur lewat GET /api/v1/gift/{giftId},
+// soalnya body callback bawaan Tako CUMA ngasih nominal, bukan nama.
+const TAKO_API_KEY = process.env.TAKO_API_KEY || "";
 
 if (!ROBLOX_SHARED_SECRET) {
   console.warn(
@@ -94,7 +98,33 @@ app.post("/webhook/tako", (req, res) => {
     createdAt: data.createdAt,
     isGift: data.relatedGiftId !== null && data.relatedGiftId !== undefined,
     receivedAt: new Date().toISOString(),
+    name: null, // diisi di bawah kalau berhasil fetch detail hadiah
+    message: null,
   };
+
+  // Kalau ini donasi lewat halaman "Kirim Hadiah" (relatedGiftId ada) dan
+  // kita punya API key, ambil nama & pesan donaturnya.
+  if (donation.isGift && TAKO_API_KEY) {
+    try {
+      const giftRes = await fetch(
+        `https://tako.id/api/v1/gift/${data.relatedGiftId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${TAKO_API_KEY}`,
+            "User-Agent": "equilibrium-obstacle-relay/1.0",
+          },
+        }
+      );
+      const giftJson = await giftRes.json();
+      const gift = giftJson?.result;
+      if (gift) {
+        donation.name = gift.gifterName || null;
+        donation.message = gift.message || null;
+      }
+    } catch (err) {
+      console.warn("Gagal ambil detail hadiah:", err.message);
+    }
+  }
 
   pendingDonations.push(donation);
   totalReceived += 1;
@@ -105,7 +135,36 @@ app.post("/webhook/tako", (req, res) => {
 });
 
 // --------------------------------------------------------------
-// 2) ENDPOINT: Di-polling sama Roblox game server
+// 2b) ENDPOINT KHUSUS TESTING: simulasi donasi tanpa perlu
+//     donasi beneran. Cukup buka URL ini di browser.
+//     Contoh: /debug/simulate?key=SECRET&name=Budi&amount=25000
+// --------------------------------------------------------------
+app.get("/debug/simulate", (req, res) => {
+  const key = req.query.key;
+
+  if (ROBLOX_SHARED_SECRET && key !== ROBLOX_SHARED_SECRET) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  const donation = {
+    id: "simulasi-" + Date.now(),
+    amount: Number(req.query.amount) || 25000,
+    paymentMethod: "qris (simulasi)",
+    createdAt: new Date().toISOString(),
+    isGift: true,
+    receivedAt: new Date().toISOString(),
+    name: req.query.name || "Tester",
+    message: req.query.message || "Ini donasi simulasi buat testing!",
+  };
+
+  pendingDonations.push(donation);
+  totalReceived += 1;
+
+  return res.json({ ok: true, simulated: donation });
+});
+
+// --------------------------------------------------------------
+// 2c) ENDPOINT: Di-polling sama Roblox game server
 //    Roblox manggil ini tiap beberapa detik pakai HttpService.
 //    Setiap donasi yang udah diambil bakal dihapus dari antrian
 //    (biar nggak double-notif).
